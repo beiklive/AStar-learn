@@ -25,6 +25,180 @@ namespace MapFunction
         int y;
     };
 
+    enum Dir
+    {
+        cur_up,
+        cur_down,
+        cur_left,
+        cur_right
+    };
+
+    void _m_FlushDelay()
+    {
+        usleep(50000);
+    }
+
+    Point up{0, -1};
+    Point down{0, 1};
+    Point left{-1, 0};
+    Point right{1, 0};
+
+    std::vector<Point> DirOffset{up, down, left, right};
+}
+
+namespace PrimMap
+{
+    using namespace MapFunction;
+
+    class MapPoint
+    {
+    private:
+        Point m_point;
+    public:
+        int WallDir;
+        MapItem Type;
+    public:
+        MapPoint() = default;
+        ~MapPoint() = default;
+        int x(){return m_point.x;}
+        int y(){return m_point.y;}
+        void SetX(int x){
+            this->m_point.x = x;
+        }
+
+        void SetY(int y){
+            this->m_point.y = y;
+        }
+        MapPoint(const Point &pos)
+        {
+            m_point.x = pos.x;
+            m_point.y = pos.y;
+        }
+        MapPoint operator =(const Point &pos)
+        {
+            this->m_point.x = pos.x;
+            this->m_point.y = pos.y;
+            return *this;
+        }
+    };
+    class BlockMapGen
+    {
+    private:
+        const MapItem WallItem = "\033[93m⊞\033[0m";
+        const MapItem SpaceItem = " ";
+        const MapItem NoneItem = "X";
+        int PrimMapSize;
+        std::vector<MapPoint *> RoadList;
+        std::vector<MapPoint *> WallList;
+        MapContainer PrimMap;
+
+    public:
+        // 检查该墙壁是否符合要求
+        bool WallCheck(MapPoint &pos){
+            // 不在地图内的点不符合要求
+            if (pos.x() < 0 || pos.y() < 0 || pos.x() >= PrimMapSize || pos.y() >= PrimMapSize)
+            {
+                return false;
+            }
+            // 已经置为通路的点不符合要求
+            if (PrimMap[pos.y()][pos.x()] == SpaceItem)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        void AllDirCheck(MapPoint &pos){
+            for (size_t i = 0; i < 4; i++)
+            {
+                MapPoint* TempPos = new MapPoint();
+                TempPos->SetX(pos.x() + DirOffset[i].x);
+                TempPos->SetY(pos.y() + DirOffset[i].y);
+                if (WallCheck(*TempPos))
+                {
+                    TempPos->WallDir = i;
+                    TempPos->Type = WallItem;
+                    WallList.push_back(TempPos);
+                }else{
+                    delete TempPos;
+                }
+            }
+
+        }
+
+        MapPoint *RandomPos(const int &range)
+        {
+            srand(time(NULL));
+            return new MapPoint(Point{rand() % range, rand() % range});
+        }
+
+        MapPoint* RoadCheck(MapPoint& pos){
+            // MapPoint* TempPos = new MapPoint(pos + DirOffset[pos.WallDir]);
+            MapPoint* TempPos = new MapPoint();
+            TempPos->SetX(pos.x() + DirOffset[pos.WallDir].x);
+            TempPos->SetY(pos.y() + DirOffset[pos.WallDir].y);
+            for (auto it = WallList.begin(); it != WallList.end(); ++it)
+            {
+                if (((*it)->x() == TempPos->x()) && ((*it)->y() == TempPos->y()))
+                {
+                    // 该点已被访问过, 不打通
+                    return nullptr;
+                }
+            }
+            // 该点未被访问
+            return TempPos;
+        }
+        MapContainer MapCal(){
+            // 选择第一个通路点
+            MapPoint *RoadStart = RandomPos(PrimMapSize);
+            RoadList.push_back(RoadStart);
+            PrimMap[RoadStart->y()][RoadStart->x()] = SpaceItem;
+            AllDirCheck(*RoadStart);
+            while (WallList.size() > 0)
+            {
+                int index = rand() % WallList.size();
+                auto tempWall = WallList[index];
+                for (auto it = WallList.begin(); it != WallList.end(); ++it)
+                {
+                    if((*it) == tempWall)
+                    {
+                        WallList.erase(it);
+                        break;
+                    }
+                }
+                auto tempRoad = RoadCheck(*tempWall);
+                if (nullptr != tempRoad)
+                {
+                    RoadList.push_back(tempWall);
+                    PrimMap[tempWall->y()][tempWall->x()] = SpaceItem;
+                    AllDirCheck(*tempWall);
+                }
+            }
+            return PrimMap;
+        }
+
+    public:
+        BlockMapGen() = delete;
+        BlockMapGen(const MapContainer &RawMap)
+        {
+            PrimMapSize = RawMap.size();
+            for (size_t i = 0; i < PrimMapSize; i++)
+            {
+                std::vector<MapItem> TempCol;
+                for (size_t j = 0; j < PrimMapSize; j++)
+                {
+                    TempCol.push_back(WallItem);
+                }
+                PrimMap.push_back(TempCol);
+            }
+        }
+        ~BlockMapGen() = default;
+    };
+
+} // namespace primMap
+
+namespace MapFunction
+{
     Point StartPoint;
     Point EndPoint;
 
@@ -32,6 +206,7 @@ namespace MapFunction
 
     Point _m_RandomGen()
     {
+
         srand(time(NULL));
         int x = rand() % MapSize;
         int y = rand() % MapSize;
@@ -53,20 +228,23 @@ namespace MapFunction
 
     void _m_SetItemPos()
     {
+        PrimMap::BlockMapGen map(MissionMap);
+        MissionMap = map.MapCal();
+
         EndPoint = _m_RandomGen();
         _m_MapItemSet(EndPoint, TargetItem);
 
         StartPoint = _m_RandomGen();
         _m_MapItemSet(StartPoint, RoleItem);
 
-        Point temp;
-        if (BlockCount > (MapSize - 1) * (MapSize - 1))
-            BlockCount = MapSize / 2;
-        for (size_t i = 0; i < BlockCount; i++)
-        {
-            temp = _m_RandomGen();
-            _m_MapItemSet(temp, BlockItem);
-        }
+        // Point temp;
+        // if (BlockCount > (MapSize - 1) * (MapSize - 1))
+        //     BlockCount = MapSize / 2;
+        // for (size_t i = 0; i < BlockCount; i++)
+        // {
+        //     temp = _m_RandomGen();
+        //     _m_MapItemSet(temp, BlockItem);
+        // }
     }
     void MapInit()
     {
@@ -84,15 +262,11 @@ namespace MapFunction
         _m_SetItemPos();
     }
 
-    void _m_FlushDelay()
-    {
-        usleep(200000);
-
-    }
 
     void MapFlush(bool flag)
     {
-        if(flag){
+        if (flag)
+        {
             std::cout << "\033c";
             MissionMap[EndPoint.y][EndPoint.x] = TargetItem;
             MissionMap[StartPoint.y][StartPoint.x] = RoleItem;
@@ -158,13 +332,7 @@ namespace AStarFunction
         }
     };
 
-    enum Dir
-    {
-        cur_up,
-        cur_down,
-        cur_left,
-        cur_right
-    };
+
     // check border and block
     bool walkCheck(const MapContainer &box, const MyPoint &pos)
     {
@@ -301,12 +469,12 @@ namespace AStarFunction
             {
                 MinSize = (*MinSize)->TreeLength < (*it)->TreeLength ? MinSize : it;
             }
-                auto pTemp2 = *MinSize;
-                while (pTemp2->pParent != nullptr)
-                {
-                    MissionMap[pTemp2->pos.y][pTemp2->pos.x] = PathItem;
-                    pTemp2 = pTemp2->pParent;
-                }
+            auto pTemp2 = *MinSize;
+            while (pTemp2->pParent != nullptr)
+            {
+                MissionMap[pTemp2->pos.y][pTemp2->pos.x] = PathItem;
+                pTemp2 = pTemp2->pParent;
+            }
 
             MapFunction::MapFlush(true);
         }
